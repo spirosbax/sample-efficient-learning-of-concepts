@@ -1,0 +1,31 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=18
+#SBATCH --gpus=1
+#SBATCH --partition=gpu
+#SBATCH --time=12:00:00
+#SBATCH --job-name=ivae_training
+#SBATCH --output=ivae_training.out
+
+
+cd $HOME/crl-for-concept-explanations/code/DL_experiments/CITRIS
+
+# hparams taken from the CITRIS paper table "CITRIS: Causal Identifiability from Temporal Intervened Sequences" 
+# Table 6
+srun python -u training/train_vae.py --model iVAE \
+    --data_dir data/causal3d_time_dep_all7_conthue_01_coarse/ \
+    --causal_encoder_checkpoint data/causal3d_time_dep_all7_conthue_01_coarse/models/CausalEncoder.ckpt \
+    --coarse_vars \
+    --batch_size 512 \
+    --num_latents 32 \
+    --beta_t1 1.0 \
+    --beta_classifier 1.0 \
+    --beta_mi_estimator 1.0 \
+    --lambda_reg 0.01 \
+    --graph_learning_method ENCO \
+    --lambda_sparse 0.02 \
+    --max_epochs 600 \
+    --cluster 
+

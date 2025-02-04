@@ -1,0 +1,18 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=18
+#SBATCH --gpus=1
+#SBATCH --partition=gpu
+#SBATCH --time=02:00:00
+#SBATCH --job-name=citris_ae_training
+#SBATCH --output=citris_ae_training.out
+
+source activate permutation-dl
+
+cd $HOME/crl-for-concept-explanations/code/DL_experiments/CITRIS
+
+srun python -u training/train_causal_encoder.py \
+    --data_dir data/causal3d_time_dep_all7_conthue_01_coarse/ \
+    --cluster

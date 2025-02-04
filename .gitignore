@@ -1,0 +1,44 @@
+.DS_Store
+.idea
+.empty
+.vscode
+
+# Python related files 
+**/__pycache__
+
+## CPU experiments
+ideal_experiments/data/ColoredBars*
+ideal_experiments/logs
+ideal_experiments/checkpoints
+ideal_experiments/experiment_checkpoints
+ideal_experiments/desktop_good_ckpts
+
+ideal_experiments/figs/**/*.png
+ideal_experiments/figs/**/*.pdf
+
+# DATABASE is becoming too large
+ideal_experiments/data/*.duckdb
+ideal_experiments/data/*.duckdb.wal
+ideal_experiments/data/kernel_arrays
+ideal_experiments/data/rff_arrays
+
+## GPU experiments
+DL_experiments/CITRIS/data
+DL_experiments/CITRIS/logs
+DL_experiments/CITRIS/checkpoints
+DL_experiments/CITRIS/cluster_checkpoints
+DL_experiments/CITRIS/desktop_good_ckpts
+
+DL_experiments/CITRIS/figs/**/*.png
+DL_experiments/CITRIS/figs/**/*.pdf
+
+*.zip
+
+## cluster generated files
+**/*.out
+cluster_results
+
+~$*
+
+code_export
+

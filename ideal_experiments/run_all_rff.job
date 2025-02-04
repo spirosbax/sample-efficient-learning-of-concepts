@@ -1,0 +1,15 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --time=24:00:00
+#SBATCH --partition=rome
+#SBATCH --job-name=rff_all
+#SBATCH --output=rff_log.out
+
+source activate concept-crl
+
+cd $HOME/crl-for-concept-explanations/code/ideal_experiments
+
+srun  python -u run_all_rff_parallel.py --check 1

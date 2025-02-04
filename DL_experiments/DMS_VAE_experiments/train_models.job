@@ -1,0 +1,85 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=18
+#SBATCH --gpus=1
+#SBATCH --partition=gpu
+#SBATCH --time=15:00:00
+#SBATCH --job-name=model_training
+#SBATCH --output=model_training.out
+
+
+source activate dms-vae
+
+cd $HOME/crl-for-concept-explanations/code/DL_experiments/DMS_VAE_experiments
+
+# We train the DMS-VAE and iVAE for the action_sparsity_non_trivial 
+# and temporal_sparsitiy_non_trivial datasets
+
+# DMS-VAE 
+echo 'Training DMS-VAE with action sparsity'
+OUTPUT_DIR=checkpoints/DMS_VAE/action_sparsity_non_trivial
+DATAROOT=dataroot
+DATASET=toy-nn/action_sparsity_non_trivial 
+srun python -u train.py --dataroot $DATAROOT \
+    --output_dir $OUTPUT_DIR \
+    --mode vae \
+    --dataset $DATASET \
+    --constraint_schedule 150000 \
+    --dual_restarts \
+    --z_dim 10 \
+    --gt_z_dim 10 \
+    --gt_x_dim 20 \
+    --n_lag 0 \
+    --time_limit 3
+
+    # --freeze_g \
+    # --freeze_gc \
+
+
+echo 'Training DMS-VAE with temporal sparsity'
+OUTPUT_DIR=checkpoints/DMS_VAE/temporal_sparsity_non_trivial
+DATAROOT=dataroot
+DATASET=toy-nn/temporal_sparsity_non_trivial 
+srun python -u train.py --dataroot $DATAROOT \
+    --output_dir $OUTPUT_DIR \
+    --mode vae \
+    --dataset $DATASET \
+    --constraint_schedule 150000 \
+    --dual_restarts \
+    --z_dim 10 \
+    --gt_z_dim 10 \
+    --gt_x_dim 20 \
+    --n_lag 1 \
+    --full_seq \
+    --time_limit 3
+
+
+# iVAE 
+echo 'Training iVAE with action sparsity'
+OUTPUT_DIR=checkpoints/iVAE/action_sparsity_non_trivial
+DATAROOT=dataroot
+DATASET=toy-nn/action_sparsity_non_trivial 
+srun python -u iVAE/train.py --dataroot $DATAROOT \
+    --output_dir $OUTPUT_DIR \
+    --dataset $DATASET \
+    --method ivae \
+    --gt_z_dim 10 \
+    --gt_x_dim 20 \
+    --time_limit 3
+
+
+# TCVAE
+ echo 'Training TCVAE with temporal sparsity'
+ OUTPUT_DIR=checkpoints/TCVAE/temporal_sparsity_non_trivial
+ DATAROOT=dataroot
+ DATASET=toy-nn/temporal_sparsity_non_trivial 
+ srun python -u beta-TCVAE/train.py --dataroot $DATAROOT \
+     --output_dir $OUTPUT_DIR \
+     --dataset $DATASET \
+     --tcvae \
+     --beta 1 \
+     --gt_z_dim 10 \
+     --gt_x_dim 20 \
+     --time_limit 3
