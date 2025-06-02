@@ -290,8 +290,6 @@ def test_model(
                 groups=groups,
                 **overlapping_settings
             )
-            print(results_two_stage["r2_score"])
-            print(results_two_stage["mse"])
 
             perm_errors[0, :, i, j] = results_linear["error_match"]
             perm_errors[1, :, i, j] = results_spline["error_match"]

@@ -25,8 +25,8 @@ if __name__ == "__main__":
     ]
     regularizers = ['group', 'lasso']
 
-    START_DATE = '2025-01-28'
-    END_DATE = '2025-01-31'
+    START_DATE = '2025-05-01'
+    END_DATE = '2025-05-30'
 
     # x axis d variables
     print("working in dimension plots")

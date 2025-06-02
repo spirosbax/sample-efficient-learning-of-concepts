@@ -2,14 +2,22 @@
 
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --time=24:00:00
-#SBATCH --partition=rome
+#SBATCH --cpus-per-task=192
+#SBATCH --time=12:00:00
+#SBATCH --partition=genoa
 #SBATCH --job-name=rff_all
 #SBATCH --output=rff_log.out
 
-source activate concept-crl
+conda deactivate
 
+module purge
+module load 2024 SciPy-bundle/2024.05-gfbf-2024a
+
+# module load 2023
+# module load Anaconda3/2023.07-2
+# source activate concept-crl
+
+source venv/bin/activate
 cd $HOME/crl-for-concept-explanations/code/ideal_experiments
 
-srun  python -u run_all_rff_parallel.py --check 1
+srun  python -u run_all_rff_parallel.py --check 0

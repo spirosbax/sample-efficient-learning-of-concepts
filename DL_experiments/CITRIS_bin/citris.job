@@ -1,0 +1,27 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=192
+#SBATCH --partition=genoa 
+#SBATCH --time=06:00:00
+#SBATCH --job-name=citris
+#SBATCH --output=citris_exp.out
+
+conda deactivate
+
+module purge
+module load 2024 SciPy-bundle/2024.05-gfbf-2024a
+
+source venv/bin/activate
+#module load Anaconda3/2023.07-2
+
+# source activate permutation-dl
+
+cd $HOME/crl-for-concept-explanations/code/DL_experiments/CITRIS_bin
+cp -r checkpoints /dev/shm
+
+# srun python -u test.py --cluster --baseline --estimator
+srun python citris_test_binarized.py --cluster 
+rm -r /dev/shm/checkpoints
+

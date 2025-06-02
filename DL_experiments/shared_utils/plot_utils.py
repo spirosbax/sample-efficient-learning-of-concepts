@@ -550,3 +550,293 @@ def make_time_plot(
     legend.clf()
     fig.clf()
     plt.close()
+
+
+
+def make_time_plot_bin(
+    all_results, 
+    baseline_all_results,
+    Ns,
+    ckpt_dir, 
+    fname
+):
+    fig_dir = os.path.join(ckpt_dir, "figs")
+    os.makedirs(fig_dir, exist_ok=True)
+
+    model_mappings = {
+        "CITRISVAE": ("CITRIS-VAE", None),
+        "iVAE": ("iVAE", None),
+        "DMS-VAE/action": ("DMS-VAE", 'action'),
+        "DMS-VAE/temporal": ("DMS-VAE", 'temporal'),
+        "iVAE/action": ("iVAE", "action"),
+        "TCVAE/temporal": ("TCVAE", 'temporal')
+    }
+    methods = [(0, "Linear"), (1, "Spline"), (2, "RFF"), (3, "Laplacian"), (4, "Two Stage")]
+    
+    legend_elements = []
+    legend= plt.figure(figsize=(4,3))
+    legend.legend(handles=legend_elements, loc='center', ncol=6)
+
+    fig, ax = plt.subplots(ncols=1, nrows=1)
+    ax.set_facecolor(FACECOLOUR)
+    ax.grid(color="white")
+    N_ids = np.arange(len(Ns))
+
+    idx = 0 
+    m_sizes = [4, 4, 8, 8, 4]
+    for i, method in methods:
+        results = [all_results[model]['times'][:, i, :, :] for model in all_results]
+        results = np.concatenate(results, axis=0)
+        best_lambda_idx = np.argmin(results.mean(axis=0), axis=0)
+
+        result_means = results[:, best_lambda_idx, N_ids].mean(axis=0)
+        results_lb = np.quantile(results[:, best_lambda_idx, N_ids], 0.25, axis=0)
+        results_ub = np.quantile(results[:, best_lambda_idx, N_ids], 0.75, axis=0)
+        # result_stds = np.std(results[:, best_lambda_idx, N_ids], axis=0)
+
+        ax.plot(Ns, result_means, color=COLOURS[idx], marker=MARKERS[0], label=method, markersize=m_sizes[0])
+        ax.fill_between(
+            Ns, 
+            results_lb, 
+            results_ub, 
+            alpha=.1,
+            color=COLOURS[idx]
+        )   
+
+        legend_elements.append(
+            Line2D([0], [0], color=COLOURS[idx], marker=MARKERS[0], lw=2, label=method,  markersize=m_sizes[0], linestyle='solid')
+        )
+
+        idx += 1
+
+    for model in baseline_all_results:
+        baseline_results = baseline_all_results[model]["times"] 
+        baseline_means = baseline_results.mean(axis=0)
+        baseline_lb = np.quantile(baseline_results, 0.25, axis=0)
+        baseline_ub = np.quantile(baseline_results, 0.75, axis=0)
+        # baseline_std = np.std(baseline_results, axis=1)
+        print(baseline_means)
+
+        ax.plot(Ns, baseline_means, color=COLOURS[idx], marker=MARKERS[-1], label=model, markersize=8)
+        ax.fill_between(Ns, baseline_lb, baseline_ub, color=COLOURS[idx], alpha=.1)   
+
+        legend_elements.append(
+            Line2D([0], [0], color=COLOURS[idx], marker=MARKERS[-1], lw=2, label=model, linestyle='solid', markersize=8)
+        )
+        idx += 1
+
+   
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    ax.set_xlabel("Nr. data points $(n)$")
+    ax.set_ylabel("Execution time $(s)$")
+    cm = 1/2.54  # centimeters in inches
+    set_ax_size(6.5*cm, 4*cm, ax)
+    save_fig(fig, os.path.join(fig_dir, f"{fname}_times"))
+
+    legend.legend(handles=legend_elements, loc='upper center', ncol=6, prop={'size': 8}) 
+    save_fig(legend, os.path.join(fig_dir, "times_legend_bin"))
+
+    legend.clf()
+    fig.clf()
+    plt.close()
+
+
+def make_continuous_plot(
+    vae_results, 
+    cbm_results,
+    metric,
+    Ns,
+    N_ids
+):
+    fig_dir = "./figs"
+    os.makedirs(fig_dir, exist_ok=True)
+
+    model_mappings = {
+        "CITRISVAE": ("CITRIS-VAE", None),
+        "iVAE": ("iVAE", None),
+        "DMS-VAE/action": ("DMS-VAE", 'action'),
+        "DMS-VAE/temporal": ("DMS-VAE", 'temporal'),
+        "iVAE/action": ("iVAE", "action"),
+        "TCVAE/temporal": ("TCVAE", 'temporal')
+    }
+    methods = [(0, "Linear"), (1, "Spline"), (2, "RFF"), (3, "Laplacian"), (4, "Two Stage")]
+    
+    legend_elements = []
+    legend= plt.figure(figsize=(4,3))
+    legend.legend(handles=legend_elements, loc='center', ncol=6)
+
+    fig, ax = plt.subplots(ncols=1, nrows=1)
+    ax.set_facecolor(FACECOLOUR)
+    ax.grid(color="white")
+    N_ids = np.arange(len(Ns))
+
+    for cbm in cbm_results:
+        res = cbm_results[cbm][metric][:, N_ids]
+        n_samples = res.shape[0]
+        cols = np.arange(len(N_ids))
+
+        result_mean = res[:, cols].mean(axis=0)
+        result_std = np.std(res[:, cols], axis=0) / np.sqrt(n_samples)
+        ax.plot(Ns, result_mean, color=COLOURS[-1], marker=MARKERS[-1], label=cbm, markersize=8)
+        ax.fill_between(
+            Ns, 
+            result_mean - result_std, 
+            result_mean + result_std, 
+            color=COLOURS[-1], 
+            alpha=0.1
+        )
+
+        legend_elements.append(
+            Line2D([0], [0], color=COLOURS[-1], marker=MARKERS[-1], lw=2, label=cbm, linestyle='solid', markersize=8)
+        )
+
+    idx = 0 
+    m_sizes = [4, 4, 8, 8, 4]
+    for j, model in enumerate(vae_results):
+        legend_elements.append(
+                Line2D([0], [0], color=COLOURS[j], lw=2, label=model, linestyle='solid')
+            )
+        for i, method in methods:
+            res = vae_results[model][metric][:, i, :, :]
+            res = res[:, :, N_ids]
+            n_samples = res.shape[0]
+            cols = np.arange((len(N_ids)))
+            best_lambda_idx = np.argmax(res.mean(axis=0), axis=0)
+
+            result_mean = res[:, best_lambda_idx, cols].mean(axis=0)
+            result_std = np.std(res[:, best_lambda_idx, cols], axis=0) / np.sqrt(n_samples)
+
+            ax.plot(Ns, result_mean, color=COLOURS[j], marker=MARKERS[i], label=method, markersize=m_sizes[i])
+            ax.fill_between(
+                Ns, 
+                result_mean - result_std, 
+                result_mean + result_std, 
+                alpha=.1,
+                color=COLOURS[j]
+            )   
+
+            legend_elements.append(
+                Line2D([0], [0], marker=MARKERS[i], lw=2, label=method,  markersize=m_sizes[i], linestyle='solid')
+            )
+
+            idx += 1
+
+    ax.set_xscale("log")
+    ax.set_ylim((-1.05, 1.05))
+
+    ax.set_xlabel("Nr. data points $(n)$")
+    ax.set_ylabel("$R^2$-score")
+    cm = 1/2.54  # centimeters in inches
+    set_ax_size(6.5*cm, 4*cm, ax)
+    save_fig(fig, os.path.join(fig_dir, f"{metric}"))
+
+    legend.legend(handles=legend_elements, loc='upper center', ncol=6, prop={'size': 8}) 
+    save_fig(legend, os.path.join(fig_dir, "legend"))
+
+    legend.clf()
+    fig.clf()
+    plt.close()
+
+
+
+def make_bin_plots(
+    vae_results, 
+    cbm_results,
+    metric,
+    Ns,
+    N_ids
+):
+    fig_dir = "./figs"
+    os.makedirs(fig_dir, exist_ok=True)
+
+    model_mappings = {
+        "CITRISVAE": ("CITRIS-VAE", None),
+        "iVAE": ("iVAE", None),
+        "DMS-VAE/action": ("DMS-VAE", 'action'),
+        "DMS-VAE/temporal": ("DMS-VAE", 'temporal'),
+        "iVAE/action": ("iVAE", "action"),
+        "TCVAE/temporal": ("TCVAE", 'temporal')
+    }
+    methods = [(0, "Linear"), (1, "Spline"), (2, "RFF")]
+    
+    legend_elements = []
+    legend= plt.figure(figsize=(4,3))
+    legend.legend(handles=legend_elements, loc='center', ncol=6)
+
+    fig, ax = plt.subplots(ncols=1, nrows=1)
+    ax.set_facecolor(FACECOLOUR)
+    ax.grid(color="white")
+    N_ids = np.arange(len(Ns))
+
+    for cbm in cbm_results:
+        res = cbm_results[cbm][metric][:, N_ids]
+        n_samples = res.shape[0]
+        cols = np.arange(len(N_ids))
+
+        result_mean = res[:, cols].mean(axis=0)
+        result_std = np.std(res[:, cols], axis=0) / np.sqrt(n_samples)
+        ax.plot(Ns, result_mean, color=COLOURS[-1], marker=MARKERS[-1], label=cbm, markersize=8)
+        ax.fill_between(
+            Ns, 
+            result_mean - result_std, 
+            result_mean + result_std, 
+            color=COLOURS[-1], 
+            alpha=0.1
+        )
+
+        legend_elements.append(
+            Line2D([0], [0], color=COLOURS[-1], marker=MARKERS[-1], lw=2, label=cbm, linestyle='solid', markersize=8)
+        )
+
+    idx = 0 
+    m_sizes = [4, 4, 8, 8, 4]
+    for j, model in enumerate(vae_results):
+        legend_elements.append(
+                Line2D([0], [0], color=COLOURS[j], lw=2, label=model, linestyle='solid')
+            )
+        for i, method in methods:
+            res = vae_results[model][metric][:, i, :, :]
+            res = res[:, :, N_ids]
+            n_samples = res.shape[0]
+            cols = np.arange((len(N_ids)))
+            best_lambda_idx = np.argmax(res.mean(axis=0), axis=0)
+
+            result_mean = res[:, best_lambda_idx, cols].mean(axis=0)
+            result_std = np.std(res[:, best_lambda_idx, cols], axis=0) / np.sqrt(n_samples)
+
+            ax.plot(Ns, result_mean, color=COLOURS[j], marker=MARKERS[i], label=method, markersize=m_sizes[i])
+            ax.fill_between(
+                Ns, 
+                result_mean - result_std, 
+                result_mean + result_std, 
+                alpha=.1,
+                color=COLOURS[j]
+            )   
+
+            legend_elements.append(
+                Line2D([0], [0], marker=MARKERS[i], lw=2, label=method,  markersize=m_sizes[i], linestyle='solid')
+            )
+
+            idx += 1
+
+    ax.set_xscale("log")
+    ax.set_ylim((-0.05, 1.05))
+
+    ax.set_xlabel("Nr. data points $(n)$")
+    if "roc" in metric:
+        ax.set_ylabel("ROC AUC curve")
+    elif "acc" in metric:
+        ax.set_ylabel("Accuracy")
+    cm = 1/2.54  # centimeters in inches
+    set_ax_size(6.5*cm, 4*cm, ax)
+    save_fig(fig, os.path.join(fig_dir, f"{metric}"))
+
+    legend.legend(handles=legend_elements, loc='upper center', ncol=6, prop={'size': 8}) 
+    save_fig(legend, os.path.join(fig_dir, "legend"))
+
+    legend.clf()
+    fig.clf()
+    plt.close()

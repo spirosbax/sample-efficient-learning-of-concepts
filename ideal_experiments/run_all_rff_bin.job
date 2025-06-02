@@ -1,0 +1,19 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=192
+#SBATCH --time=12:00:00
+#SBATCH --partition=genoa
+#SBATCH --job-name=rff_all
+#SBATCH --output=rff_log.out
+
+conda deactivate 
+
+module purge
+module load 2024 SciPy-bundle/2024.05-gfbf-2024a
+
+source venv/bin/activate
+cd $HOME/crl-for-concept-explanations/code/ideal_experiments
+
+srun -u python run_all_rff_parallel_bin.py --check 1

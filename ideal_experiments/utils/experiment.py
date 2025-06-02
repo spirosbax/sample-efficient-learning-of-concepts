@@ -2,6 +2,10 @@ import os
 import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+from sklearn.neural_network import MLPClassifier
+
 from typing import List
 
 from utils.kernels import *
@@ -198,6 +202,93 @@ def sample_y_data_features(
     return y_train, y_test
 
 
+def binarize_latents(all_latents):
+    num_latents = all_latents.shape[0]
+    bin_all_latents = np.zeros(all_latents.shape)
+    for i in range(num_latents):
+        min_val = np.min(all_latents[i, :])
+        max_val = np.max(all_latents[i, :])
+
+        mid_point = (max_val + min_val) / 2 
+        # print('concept ', i)
+        # print(f"min: {min_val}, max: {max_val}, mid: {mid_point}")
+        bin_all_latents[i, all_latents[i, :] > mid_point] = 1
+
+    return bin_all_latents
+
+
+def sample_concept_labels(
+    x_train: np.array, 
+    x_test: np.array,
+    dim: int, 
+    permutation: np.array,
+): 
+    n_train = x_train.shape[1]
+
+    w = np.random.random((dim, 1))
+
+    w_neg = 2 * (w[w <= 0.5] - 1)
+    w_pos = 2 * (w[w > 0.5])
+
+    w = np.concatenate((w_neg, w_pos))
+    np.random.shuffle(w)
+    w = w.reshape(dim, 1)
+
+    list_of_funcs = np.random.choice(
+        diffeomorphisms_bin, 
+        size=dim
+    )
+
+    y_train = true_alignment(
+        x_train,
+        scalars=w, 
+        list_of_funcs=list_of_funcs, 
+        permutation=permutation 
+    )       
+    y_test = true_alignment(
+        x_test,
+        scalars=w, 
+        list_of_funcs=list_of_funcs, 
+        permutation=permutation 
+    )       
+
+    noise_train = np.random.normal(
+        loc=0, 
+        scale=NOISE_STD, 
+        size=(dim, x_train.shape[1])
+    )
+    noise_test = np.random.normal(
+        loc=0, 
+        scale=NOISE_STD, 
+        size=(dim, x_test.shape[1])
+    )
+    y_train = y_train + noise_train
+    y_test = y_test + noise_test
+    y_all = np.hstack((y_train, y_test))
+    bin_labels = binarize_latents(y_all)
+
+    return bin_labels[:, :n_train], bin_labels[:, n_train:]
+
+
+def create_labels(bin_train, bin_test):
+    num_latents = bin_train.shape[0]
+    active_size = max(3, int(num_latents / 5))
+
+    options = np.arange(num_latents)
+    active_concepts = np.random.choice(options, size=active_size)
+
+    sum_active_train = bin_train[active_concepts, :].sum(axis=0)
+    sum_active_test = bin_test[active_concepts, :].sum(axis=0)
+
+    y_train = np.zeros(sum_active_train.shape[0])
+    y_test = np.zeros(sum_active_test.shape[0])
+
+    sum_needed = max(1, int(num_latents / 10))
+    y_train[sum_active_train > sum_needed] = 1
+    y_test[sum_active_test > sum_needed] = 1
+    return y_train, y_test
+
+
 def sample_y_data_kernels(
         x_train: np.array, 
         x_test: np.array,
@@ -332,6 +423,14 @@ diffeomorphism_3 = np.vectorize(diffeomorphism_3)
 diffeomorphism_4 = np.vectorize(diffeomorphism_4)
 diffeomorphism_5 = np.vectorize(diffeomorphism_5)
 
+diffeomorphisms_bin = [
+    diffeomorphism_1, 
+    diffeomorphism_2, 
+    diffeomorphism_3, 
+    # diffeomorphism_4,
+    # diffeomorphism_5
+]
+
 diffeomorphisms = [
     diffeomorphism_1, 
     diffeomorphism_2, 
@@ -371,3 +470,199 @@ def save_error_data(ckpt_dir: str, perm_error:np.array, y_mse: np.array, feature
     for i, feature in enumerate(features):
         np.savetxt(os.path.join(data_dir, f"{feature}_perm_error_{suffix}"), perm_error[:, i], fmt='%.6f')
         np.savetxt(os.path.join(data_dir, f"{feature}_y_mse_{suffix}"), y_mse[:, i], fmt='%.6f')
+
+
+
+
+
+
+
+def sample_correctly(encs, latents, y_values, n_total, N_train):
+    # We use as many test data points as train data points
+    # run until at least 1 of each label is found
+    i = 0
+    while True:
+        print(i, "Sampling again")
+        i += 1
+        indices = np.random.choice(size=n_total, a=np.arange(n_total),replace=False)
+        train_idx, test_idx = indices[:N_train], indices[N_train:]
+
+        train_encs = encs[:, train_idx]
+        test_encs = encs[:, test_idx]
+
+        train_latents = latents[:, train_idx]
+        test_latents = latents[:, test_idx]
+
+        train_y = y_values[train_idx]
+        test_y = y_values[test_idx]
+
+        latent_check = np.all([
+            np.any(train_latents[col, :] == 0) and
+            np.any(train_latents[col, :] == 1) and
+            np.any(test_latents[col, :] == 0) and
+            np.any(test_latents[col, :] == 1) 
+            for col in range(train_latents.shape[0])
+        ])
+
+        label_check = np.all([
+            np.any(train_y == 0) and
+            np.any(train_y == 1) and
+            np.any(test_y == 0) and
+            np.any(test_y == 1) 
+        ])
+        if latent_check and label_check:
+            return {
+                "train_encs": train_encs,
+                "test_encs": test_encs,
+                "train_latents": train_latents,
+                "test_latents": test_latents,
+                "train_y": train_y,
+                "test_y": test_y,
+            }
+
+
+def split_correctly(y_score, y_true, test_size):
+    while True:
+        print("sampling")
+        y_score_train, y_score_test, y_true_train, y_true_test = train_test_split(
+            y_score, y_true, test_size=test_size
+        )
+
+        label_check = np.all([
+            np.any(y_true_train[:, col] == 0) and
+            np.any(y_true_train[:, col] == 1) and
+            np.any(y_true_test[:, col] == 0) and
+            np.any(y_true_test[:, col] == 1) 
+            for col in range(y_true_train.shape[1])
+        ])
+        if label_check:
+            return y_score_train, y_score_test, y_true_train, y_true_test
+
+def concept_correlation_nicher(y_true, y_score, multi_dim=False):
+    n_concepts = y_true.shape[1]
+    if multi_dim:
+        corr_matrix = np.zeros((n_concepts, n_concepts))
+        n_emb = y_score.shape[2]
+        for i in range(n_concepts):
+            for j in range(n_concepts):
+                corr_intermediate =  np.corrcoef(np.hstack([y_score[:, i, :], y_true[:, j].reshape(-1, 1)]).T)
+                nm = corr_intermediate[:n_emb, n_emb:]
+                corr_matrix[i, j] = nm.max()
+    else:
+        corr_matrix = np.abs(np.corrcoef(y_score.T, y_true.T)[:n_concepts, n_concepts:])
+    return corr_matrix
+
+
+def concept_niche(corr_matrix, beta):
+    n_concepts = corr_matrix.shape[1]
+    
+    niche = []
+    for j in range(n_concepts):
+        niche_j = [i for i in range(n_concepts) if corr_matrix[i, j] > beta]
+        niche.append(niche_j)
+
+    return niche
+
+
+def niche_impurity(y_true, y_score, corr_matrix, beta, mlp, multi_dim=False):
+    n_concepts = y_true.shape[1]
+
+    niche = concept_niche(corr_matrix, beta) 
+    niche_impurities = np.zeros(n_concepts)
+
+    repeats = y_score.shape[1] / n_concepts
+    for i in range(n_concepts):
+        mask = np.ones(n_concepts)
+        mask[niche[i]] = 0
+        if multi_dim:
+            mask = np.repeat(mask, repeats)
+        y_score_masked = y_score * mask[np.newaxis, :]
+
+        y_mlp_score_test = mlp.predict_proba(y_score_masked)[:, i]
+
+        niche_impurities[i] = roc_auc_score(y_true[:, i], y_mlp_score_test)
+    return niche_impurities
+
+
+def nich_impurity_score(y_true, y_score, tensor=False):
+    (n_samples, n_concepts) = y_true.shape
+    dimensions = y_score.shape
+    if tensor:
+        y_score = y_score.detach().cpu().numpy()
+        y_true = y_true.detach().cpu().numpy()
+
+    y_score_train, y_score_test, y_true_train, y_true_test = split_correctly(
+        y_score, y_true, test_size=0.2
+    )
+    mlp = MLPClassifier(
+        hidden_layer_sizes=[20, 20], 
+        activation='relu', 
+        max_iter=1000, 
+        batch_size=min(512, n_samples)
+    )
+
+    if len(dimensions) > 2:
+        y_score_train2 = y_score_train.reshape(-1, dimensions[2] * n_concepts)
+        y_score_test2 = y_score_test.reshape(-1, dimensions[2] * n_concepts)
+        corr_matrix = concept_correlation_nicher(y_true, y_score, multi_dim=True)
+
+        mlp.fit(y_score_train2, y_true_train)
+    else:
+        corr_matrix = concept_correlation_nicher(y_true, y_score, multi_dim=False)
+
+        mlp.fit(y_score_train, y_true_train)
+    
+
+    betas = np.linspace(0, 1, 21)
+    niche_impurities_betas = np.zeros((21, n_concepts))
+    for i, beta in enumerate(betas):
+        if len(dimensions) > 2:
+            niche_impurities_betas[i, :] = niche_impurity(y_true_test, y_score_test2, corr_matrix, beta, mlp, multi_dim=True)
+        else:
+            niche_impurities_betas[i, :] = niche_impurity(y_true_test, y_score_test, corr_matrix, beta, mlp, multi_dim=True)
+
+    scores = np.trapz(niche_impurities_betas, dx=0.05, axis=0)
+    return scores.sum() / n_concepts
+
+
+def ois_score(y_true, y_score, tensor=False):
+    n_concepts = y_true.shape[1]   
+
+    impurity_matrix_hat = np.zeros((n_concepts, n_concepts))
+    impurity_matrix = np.zeros((n_concepts, n_concepts))
+
+    if tensor:
+        y_score = y_score.detach().cpu().numpy()
+        y_true = y_true.detach().cpu().numpy()
+    y_score_train, y_score_test, y_true_train, y_true_test = split_correctly(
+        y_score, y_true, test_size=0.2
+    )
+    dimensions = y_score.shape
+    for i in range(n_concepts):
+        for j in range(n_concepts):
+            if len(dimensions) == 2:
+                mlp = MLPClassifier(hidden_layer_sizes=[32], activation='relu', max_iter=32)
+                mlp.fit(y_score_train[:, i:i+1], y_true_train[:, j])
+                y_mlp_score_test = mlp.predict_proba(y_score_test[:, i:i+1])[:, 1]
+                impurity_matrix_hat[i, j] = roc_auc_score(y_true_test[:, j], y_mlp_score_test)
+
+                mlp = MLPClassifier(hidden_layer_sizes=[32], activation='relu', max_iter=32)
+                mlp.fit(y_true_train[:, i:i+1], y_true_train[:, j])
+                y_mlp_score_test = mlp.predict_proba(y_true_test[:, i:i+1])[:, 1]
+                impurity_matrix[i, j] = roc_auc_score(y_true_test[:, j], y_mlp_score_test)
+
+            else:
+                mlp = MLPClassifier(hidden_layer_sizes=[32], activation='relu', max_iter=32)
+                mlp.fit(y_score_train[:, i, :], y_true_train[:, j])
+                y_mlp_score_test = mlp.predict_proba(y_score_test[:, i, :])[:, 1]
+                impurity_matrix_hat[i, j] = roc_auc_score(y_true_test[:, j], y_mlp_score_test)
+
+                mlp = MLPClassifier(hidden_layer_sizes=[32], activation='relu', max_iter=32)
+                mlp.fit(y_true_train[:, i:i+1], y_true_train[:, j])
+                y_mlp_score_test = mlp.predict_proba(y_true_test[:, i:i+1])[:, 1]
+                impurity_matrix[i, j] = roc_auc_score(y_true_test[:, j], y_mlp_score_test)
+
+
+    norm_diff = np.linalg.norm(impurity_matrix_hat - impurity_matrix)
+    
+    return 2 * norm_diff / n_concepts

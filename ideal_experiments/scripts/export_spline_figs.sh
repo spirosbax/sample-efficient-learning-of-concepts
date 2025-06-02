@@ -1,11 +1,12 @@
 #!/bin/bash
 
 # Bash script that exports the required figures from the spline experiments into the
-# LaTeX document. 
+# LaTeX document. It consists of 2 parts, a curated list for the main text, and 
+# a random selection
 
 # Assign arguments to variables
 SOURCE_DIR=./figs/spline
-DEST_DIR=./../../crl-writing/icml/figs/spline
+DEST_DIR=./../../crl-writing/neurips/figs/spline
 CURATED_LIST=(
     "alpha/perm_error_match/d_variables=100_entanglement=0_miss_well=true_n_total=1250_wide.pdf"
     "alpha/perm_error_match/d_variables=100_entanglement=0_miss_well=false_n_total=1250_wide.pdf"

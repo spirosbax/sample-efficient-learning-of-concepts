@@ -29,6 +29,12 @@ DL_experiments/CITRIS/checkpoints
 DL_experiments/CITRIS/cluster_checkpoints
 DL_experiments/CITRIS/desktop_good_ckpts
 
+DL_experiments/CITRIS_bin/data
+DL_experiments/CITRIS_bin/logs
+DL_experiments/CITRIS_bin/checkpoints
+DL_experiments/CITRIS_bin/cluster_checkpoints
+DL_experiments/CITRIS_bin/desktop_good_ckpts
+
 DL_experiments/CITRIS/figs/**/*.png
 DL_experiments/CITRIS/figs/**/*.pdf
 

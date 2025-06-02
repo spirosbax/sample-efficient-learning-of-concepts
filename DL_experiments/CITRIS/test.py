@@ -47,11 +47,7 @@ def do_full_test(model_args, base_dir,  Ns, alphas, do_baseline, do_estimator):
     all_latents_2 = all_latents[:, 3:5].sum(axis=-1)
     all_latents_3 = all_latents[:, 5:]
 
-    if model.__class__.__name__ == "CITRISVAE":
-        all_latents_4 = np.random.normal(size=all_latents.shape[0])
-        all_latents = np.c_[all_latents_1, all_latents_2, all_latents_3, all_latents_4]
-    elif model.__class__.__name__ == "iVAE":
-        all_latents = np.c_[all_latents_1, all_latents_2, all_latents_3]
+    all_latents = np.c_[all_latents_1, all_latents_2, all_latents_3]
 
     if do_baseline:
         baseline = get_nn_baseline(
@@ -83,7 +79,7 @@ def do_full_test(model_args, base_dir,  Ns, alphas, do_baseline, do_estimator):
 if __name__ == "__main__":    
     models = [
         {"model_type": "CITRISVAE"},
-        {"model_type": "iVAE"},
+        # {"model_type": "iVAE"},
     ]
 
     alphas = [
@@ -107,7 +103,9 @@ if __name__ == "__main__":
     if args.cluster:
         base_dir = "checkpoints"
         baseline_all_results = {}
-        all_results = {}
+        with open(os.path.join(base_dir, "all_results.pickle"), "rb") as f:
+                all_results = pickle.load(f)
+
         for model in models:
             model_args["model_type"] = model["model_type"]
             print_params("Permutation estimation experiment", model_args)

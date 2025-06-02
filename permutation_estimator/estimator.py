@@ -6,12 +6,12 @@ from typing import Union, List, Dict
 
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Ridge, Lasso, ElasticNet
+from sklearn.linear_model import Ridge, Lasso, ElasticNet, LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator
 from sklearn.kernel_approximation import Nystroem
 from sklearn.utils.validation import check_is_fitted
-from group_lasso import GroupLasso
+from group_lasso import GroupLasso, LogisticGroupLasso
 
 class permutationMixin:
 
@@ -23,26 +23,36 @@ class permutationMixin:
         optim_kwargs: Dict,
         groups: Union[None, np.array]=None
     ):  
-        allowed_regs = ["group", "lasso", "elastic", "ridge"]
+        allowed_regs = ["logistic_group", "group", "lasso", "elastic", "ridge", "logistic"]
         assert regularizer in allowed_regs, f"{regularizer} not recognized. Select one of the accepted options."
         if groups is None:
             self.lasso_groups = np.concatenate(
-                [n_features * [idx] for idx in range(dim)]
+                [n_features * [idx] for idx in range(dim)] 
             )
         else:
             self.lasso_groups = np.concatenate(
-                [n_features * [g] for g in groups]
+                [n_features * [g] for g in groups] 
             )
 
         if optim_kwargs['alpha'] == 0:
             optim = Ridge()
         else:
             if regularizer == "group":
-
                 optim_kwargs["group_reg"] = optim_kwargs["alpha"]
                 optim_kwargs.pop("alpha", None)
 
                 optim = GroupLasso(
+                    groups=self.lasso_groups,
+                    supress_warning=True,
+                    n_iter=20000,
+                    tol=1e-4,
+                    **optim_kwargs
+                )
+            elif regularizer == "logistic_group":
+                optim_kwargs["group_reg"] = optim_kwargs["alpha"]
+                optim_kwargs.pop("alpha", None)
+
+                optim = LogisticGroupLasso(
                     groups=self.lasso_groups,
                     supress_warning=True,
                     n_iter=20000,
@@ -77,6 +87,17 @@ class permutationMixin:
                     self.pred_groups = np.concatenate(
                         [n_features * [g] for g in groups]
                     )
+            elif regularizer == "logistic":
+                if groups is None:
+                    self.pred_groups = np.concatenate(
+                        [n_features * [idx] for idx in range(dim)]
+                    )
+                else:
+                    self.pred_groups = np.concatenate(
+                        [n_features * [g] for g in groups]
+                    )
+                optim = LogisticRegression(max_iter=20000)
+
         return optim
 
     def _invert_permutation(self, permutation):
@@ -156,19 +177,25 @@ class permutationMixin:
         summed_coef_matrix = np.abs(coef_matrix)
         if groups is None:
             summed_coef_matrix = summed_coef_matrix.reshape(dim, n_features, -1, order="F")
-            summed_coef_matrix = summed_coef_matrix.sum(axis=1)
+            summed_coef_matrix = np.sqrt(
+                np.square(summed_coef_matrix).mean(axis=1)
+                )
 
         else:
             unique_groups = np.unique(groups, return_index=True)[0]
             result = np.zeros(shape=(summed_coef_matrix.shape[0], len(unique_groups)))
             for group in unique_groups:
                 group_columns = self.lasso_groups == group
-                result[:, group] = summed_coef_matrix[:, group_columns].sum(axis=1)
+                result[:, group] = np.sqrt(
+                    np.square(summed_coef_matrix[:, group_columns]).mean(axis=1)
+                )
 
             summed_coef_matrix = result
 
         if soft_matching:
         # Adapted from https://python.quantecon.org/opt_transport.html
+            summed_coef_matrix = np.abs(coef_matrix)
+            print(summed_coef_matrix.shape)
             d_out, d_in = summed_coef_matrix.shape
             summed_coef_matrix_vec = summed_coef_matrix.reshape((-1, 1), order="F")
 
@@ -228,27 +255,41 @@ class permutationMixin:
         """
         check_is_fitted(self)
         if self.groups is None:
-            X = X.reshape(w.shape[0], self.n_features, X.shape[1]).transpose(0, 2, 1)
-            w_x = w[:, np.newaxis, :] * X
-            phi_x = np.sum(w_x, axis=2) 
+            if self.two_stage is None:
+                phi_x = np.zeros(shape=(w.shape[0], X.shape[1]))
+                for i, group in enumerate(permutation):
+                    group_columns = self.lasso_groups == group
+                    w_x = w[i, :].reshape(-1, 1) * X[group_columns, :]
+                    phi_x[i, :] = w_x.sum(axis=0)
+            else:
+                phi_x = np.zeros(shape=(len(w), X.shape[1]))
+                for i, group in enumerate(permutation):
+                    group_columns = self.pred_groups == group
+                    w_x = w[i].T * X[group_columns, :]
+                    phi_x[i, :] = w_x.sum(axis=0)
+
+            # X = X.reshape(w.shape[0], self.n_features, X.shape[1]).transpose(0, 2, 1)
+            # w_x = w[:, np.newaxis, :] * X
+            # phi_x = np.sum(w_x, axis=2) 
         else:
             if self.two_stage is None:
-                unique_groups = np.unique(self.groups, return_index=True)[0]
                 phi_x = np.zeros(shape=(w.shape[0], X.shape[1]))
-                for i, group in enumerate(unique_groups):
+                unique_groups = np.unique(self.groups, return_index=True)[0]
+                for i, group in enumerate(permutation):
                     group_columns = self.lasso_groups == group
                     w_x = w[i, :].reshape(-1, 1) * X
                     phi_x[i, :] = w_x[group_columns, :].sum(axis=0)
             else:
                 unique_groups = np.unique(self.groups, return_index=True)[0]
                 phi_x = np.zeros(shape=(len(w), X.shape[1]))
-                for i, group in enumerate(unique_groups):
+                for i, group in enumerate(permutation):
                     group_columns = self.pred_groups == group
-                    w_x = w[i][:, np.newaxis] * X[group_columns, :]
+                    w_x = w[i].T * X[group_columns, :]
                     phi_x[i, :] = w_x.sum(axis=0)
-
-
-        return phi_x[permutation, :] + self.intercept_[:, np.newaxis]
+        if len(self.intercept_.shape) > 1:
+            return phi_x + self.intercept_
+        else:
+            return phi_x + self.intercept_[:, np.newaxis]
 
     def _perform_fit(
         self,
@@ -256,13 +297,28 @@ class permutationMixin:
         phi_x: np.array, 
         y: np.array, 
         n_features: np.array,
-        recover_weights: bool=True
+        recover_weights: bool=True, 
+        soft_matching: bool=False
     ):
         dim = y.shape[0]
-        optim.fit(phi_x.T, y.T)
-        if optim.__class__.__name__ == "GroupLasso":
+        if optim.__class__.__name__ == "LogisticGroupLasso":
+            beta_hat_all = np.zeros((dim, phi_x.shape[0]))
+            self.intercept_ = np.zeros(dim)
+            for i in range(dim):
+                optim.fit(phi_x.T, y[i, :].T)
+                beta_hat_all[i, :] = optim.coef_[:, 0].T
+
+                self.intercept_[i] = self._optim.intercept_[0]
+            # phi_x_kron = sp.sparse.kron(np.eye(dim), phi_x)
+            # y_kron = y.reshape(-1, 1)
+            # optim.fit(phi_x_kron.T, y_kron)
+            # beta_hat_all = optim.coef_[:,0].reshape((dim, phi_x.shape[0]))
+            # self.lasso_groups = self.lasso_groups[:phi_x.shape[0]]
+        elif optim.__class__.__name__ == "GroupLasso":
+            optim.fit(phi_x.T, y.T)
             beta_hat_all = optim.coef_.T
         else:
+            optim.fit(phi_x.T, y.T)
             beta_hat_all = optim.coef_
 
         if recover_weights:
@@ -271,6 +327,7 @@ class permutationMixin:
                 dim=dim, 
                 n_features=n_features,
                 groups=self.groups, 
+                soft_matching=soft_matching
             )
             return_dict = {
                 "perm_hat_max" : res[0],
@@ -286,6 +343,7 @@ class permutationMixin:
                 dim=dim, 
                 n_features=n_features,
                 groups=self.groups,
+                soft_matching=soft_matching
             )
             return_dict = {
                 "perm_hat_max" : res[0][:, 0],
@@ -318,13 +376,11 @@ class permutationMixin:
             self.intercept_ = np.array(intercept)
 
         else:
-            unique_groups = np.unique(self.groups, return_index=True)[0]
+            beta_hat = [0] * len(self.perm_hat_match_)
+            intercept = [0] * len(self.perm_hat_match_)
 
-            beta_hat = [0] * len(unique_groups)
-            intercept = [0] * len(unique_groups)
-
-            for i, group in enumerate(unique_groups):
-                j_i = self.perm_hat_match_[group]
+            for i, group in enumerate(self.perm_hat_match_):
+                j_i = group
                 group_columns = self.pred_groups == j_i
                 self._predict_optims[i].fit(phi_x[group_columns, :].T, y[i, :].T)
                 beta_hat[i] = self._predict_optims[i].coef_
@@ -345,20 +401,20 @@ class permutationMixin:
         if self.groups is None:
             y_hat = self._predict(
                 X=phi_x, 
-                w=self.beta_hat_match_[perm_inv, :], 
+                w=self.beta_hat_match_, 
                 permutation=self.perm_hat_match_, 
             )
         else:
             if self.two_stage is None:
                 y_hat = self._predict(
                     X=phi_x, 
-                    w=self.beta_hat_all_[perm_inv, :], 
+                    w=self.beta_hat_all_, 
                     permutation=self.perm_hat_match_, 
                 )
             else:
                 y_hat = self._predict(
                     X=phi_x, 
-                    w=[self.beta_hat_all_[int(i)] for i in perm_inv], 
+                    w=[self.beta_hat_all_[int(i)] for i in range(len(perm_inv))], 
                     permutation=self.perm_hat_match_, 
                 )
         return y_hat
@@ -368,11 +424,25 @@ class permutationMixin:
 
         phi_x = self.transform(X)
         perm_inv = self._invert_permutation(self.perm_hat_max_)
-        y_hat = self._predict(
-            X=phi_x, 
-            w=self.beta_hat_max_[perm_inv, :], 
-            permutation=self.perm_hat_max_
-        )
+        if self.groups is None:
+            y_hat = self._predict(
+                X=phi_x, 
+                w=self.beta_hat_match_, 
+                permutation=self.perm_hat_max_, 
+            )
+        else:
+            if self.two_stage is None:
+                y_hat = self._predict(
+                    X=phi_x, 
+                    w=self.beta_hat_all_, 
+                    permutation=self.perm_hat_max_, 
+                )
+            else:
+                y_hat = self._predict(
+                    X=phi_x, 
+                    w=[self.beta_hat_all_[int(i)] for i in range(len(perm_inv))], 
+                    permutation=self.perm_hat_max_, 
+                )
         return y_hat
     
     def predict_full(self, X):
@@ -407,7 +477,7 @@ class FeaturePermutationEstimator(permutationMixin, BaseEstimator):
         self.groups = groups
         self.two_stage = two_stage
 
-    def fit(self, X, y, is_fit_transformed=False, recover_weights=True):
+    def fit(self, X, y, is_fit_transformed=False, recover_weights=True, soft_matching=False):
 
         start = time()
         # Apply feature transform
@@ -431,7 +501,7 @@ class FeaturePermutationEstimator(permutationMixin, BaseEstimator):
                 self._setup_optim(
                     regularizer=self.two_stage, 
                     optim_kwargs={"alpha": self.optim_kwargs["alpha"]}, 
-                    dim=1,
+                    dim=self.d_variables,
                     n_features=self.n_features, 
                     groups=self.groups
                     ) 
@@ -464,33 +534,43 @@ class FeaturePermutationEstimator(permutationMixin, BaseEstimator):
             phi_x=phi_x_perm, 
             y=y_perm, 
             n_features=_perm_features,
-            recover_weights=recover_weights
+            recover_weights=recover_weights, 
+            soft_matching=soft_matching
         )
         stop = time()
         res["time_match"] = stop - start
         
-        start = time()
-        self.perm_hat_corr_ = self._get_corr_perm(X_perm, y_perm, groups=self.groups)
-        stop = time()
-        res["time_corr"] = stop - start
+        if self.regularizer != "logistic_group":
+            start = time()
+            self.perm_hat_corr_ = self._get_corr_perm(X_perm, y_perm, groups=self.groups)
+            stop = time()
+            res["time_corr"] = stop - start
 
-        start = time()
-        self.perm_hat_spr_ = self._get_spr_perm(X_perm, y_perm, groups=self.groups)
-        stop = time()
-        res["time_spear"] = stop - start 
+            start = time()
+            self.perm_hat_spr_ = self._get_spr_perm(X_perm, y_perm, groups=self.groups)
+            stop = time()
+            res["time_spear"] = stop - start 
 
-        self.perm_hat_max_ = res["perm_hat_max"]
-        self.perm_hat_match_ = res["perm_hat_match"]
-        self.beta_hat_max_ = res["beta_hat_max"]
-        self.beta_hat_match_ = res["beta_hat_match"]
-        self.beta_hat_all_ = res["beta_hat_all"]
+            self.perm_hat_max_ = res["perm_hat_max"]
+            self.perm_hat_match_ = res["perm_hat_match"]
+            self.beta_hat_max_ = res["beta_hat_max"]
+            self.beta_hat_match_ = res["beta_hat_match"]
+            self.beta_hat_all_ = res["beta_hat_all"]
 
-        self.intercept_ = self._optim.intercept_
+            self.intercept_ = self._optim.intercept_
 
-        res["non_zero_count"] = np.sum(~np.isclose(self.beta_hat_all_, 0, atol=1e-6))
+            res["non_zero_count"] = np.sum(~np.isclose(self.beta_hat_all_, 0, atol=1e-6))
 
-        res["perm_hat_spr"] = self.perm_hat_spr_
-        res["perm_hat_corr"] = self.perm_hat_corr_
+            res["perm_hat_spr"] = self.perm_hat_spr_
+            res["perm_hat_corr"] = self.perm_hat_corr_
+        else:
+            self.perm_hat_max_ = res["perm_hat_max"]
+            self.perm_hat_match_ = res["perm_hat_match"]
+            self.beta_hat_max_ = res["beta_hat_max"]
+            self.beta_hat_match_ = res["beta_hat_match"]
+            self.beta_hat_all_ = res["beta_hat_all"]
+
+            res["non_zero_count"] = np.sum(~np.isclose(self.beta_hat_all_, 0, atol=1e-6))
 
         if self.two_stage:
             self._perform_predict_fit(phi_x_predict, y_predict)
@@ -596,28 +676,38 @@ class KernelizedPermutationEstimator(permutationMixin, BaseEstimator):
         stop = time()
         res["time_match"] = stop - start
         
-        start = time()
-        self.perm_hat_corr_ = self._get_corr_perm(X, y, groups=self.groups)
-        stop = time()
-        res["time_corr"] = stop - start
+        if self.regularizer != "logistic_group":
+            start = time()
+            self.perm_hat_corr_ = self._get_corr_perm(X, y, groups=self.groups)
+            stop = time()
+            res["time_corr"] = stop - start
 
-        start = time()
-        self.perm_hat_spr_ = self._get_spr_perm(X, y, groups=self.groups)
-        stop = time()
-        res["time_spear"] = stop - start 
+            start = time()
+            self.perm_hat_spr_ = self._get_spr_perm(X, y, groups=self.groups)
+            stop = time()
+            res["time_spear"] = stop - start 
 
-        self.perm_hat_max_ = res["perm_hat_max"]
-        self.perm_hat_match_ = res["perm_hat_match"]
-        self.beta_hat_max_ = res["beta_hat_max"]
-        self.beta_hat_match_ = res["beta_hat_match"]
-        self.beta_hat_all_ = res["beta_hat_all"]
+            self.perm_hat_max_ = res["perm_hat_max"]
+            self.perm_hat_match_ = res["perm_hat_match"]
+            self.beta_hat_max_ = res["beta_hat_max"]
+            self.beta_hat_match_ = res["beta_hat_match"]
+            self.beta_hat_all_ = res["beta_hat_all"]
 
-        self.intercept_ = self._optim.intercept_
+            self.intercept_ = self._optim.intercept_
 
-        res["non_zero_count"] = np.sum(~np.isclose(self.beta_hat_all_, 0, atol=1e-6))
+            res["non_zero_count"] = np.sum(~np.isclose(self.beta_hat_all_, 0, atol=1e-6))
 
-        res["perm_hat_spr"] = self.perm_hat_spr_
-        res["perm_hat_corr"] = self.perm_hat_corr_
+            res["perm_hat_spr"] = self.perm_hat_spr_
+            res["perm_hat_corr"] = self.perm_hat_corr_
+        else:
+            self.perm_hat_max_ = res["perm_hat_max"]
+            self.perm_hat_match_ = res["perm_hat_match"]
+            self.beta_hat_max_ = res["beta_hat_max"]
+            self.beta_hat_match_ = res["beta_hat_match"]
+            self.beta_hat_all_ = res["beta_hat_all"]
+
+            res["non_zero_count"] = np.sum(~np.isclose(self.beta_hat_all_, 0, atol=1e-6))
+
 
         return res
 

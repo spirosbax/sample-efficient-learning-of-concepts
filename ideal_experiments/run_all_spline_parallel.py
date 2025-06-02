@@ -1,8 +1,9 @@
+import os
 from itertools import product
 from typing import List
 from argparse import ArgumentParser
 
-import multiprocessing 
+from joblib import Parallel, delayed
 import time
 
 import duckdb
@@ -10,85 +11,6 @@ import numpy as np
 
 from experiment.spline_experiment import do_spline_experiment
 from experiment.spline_settings import series_params 
-
-
-class Consumer(multiprocessing.Process):
-
-    def __init__(self, task_queue, result_queue):
-        multiprocessing.Process.__init__(self)
-        self.task_queue = task_queue
-        self.result_queue = result_queue
-
-    def run(self):
-        proc_name = self.name
-        while True:
-            next_task = self.task_queue.get()
-            if next_task is None:
-                # Poison pill means shutdown
-                print(f"{proc_name}: Exiting")
-                self.task_queue.task_done()
-                break
-
-            result = next_task()
-            self.result_queue.put(result)
-
-            self.task_queue.task_done()
-        return
-
-
-class Task(object):
-    def __init__(
-            self, 
-            n_total, 
-            test_frac,
-            d_variables,
-            n_knots,
-            degree,
-            alpha,
-            regularizer,
-            entanglement,
-            spec, 
-            seeds
-        ):
-        self.n_total      = n_total
-        self.test_frac    = test_frac
-        self.d_variables  = d_variables
-        self.n_knots      = n_knots
-        self.degree       = degree
-        self.alpha        = alpha
-        self.regularizer  = regularizer
-        self.entanglement = entanglement
-        self.spec         = spec 
-        self.seed         = seeds
-        
-    def __call__(self):
-        results = [0] * len(self.seed)
-        for i, seed in enumerate(self.seed):
-            results[i] = do_spline_experiment(
-                    n_total=self.n_total, 
-                    test_frac=self.test_frac,
-                    d_variables=self.d_variables,
-                    n_knots=self.n_knots,
-                    degree=self.degree,
-                    alpha=self.alpha,
-                    regularizer=self.regularizer,
-                    entanglement=self.entanglement,
-                    spec=self.spec, 
-                    seed=seed
-                )
-        return results
-        
-    def __str__(self):
-        name = f"""Running experiment with the following parameters:
-    - {self.n_total} data points with test fraction {self.test_frac}
-    - {self.regularizer} regularizer with parameter {self.alpha}
-    - {self.d_variables} dimensions
-    - {self.n_knots} n_knots
-    - {self.degree} degree
-    - {self.entanglement} correlation in the data
-    - {self.spec} specified
-    - {self.seed} random seed"""
-        return name
 
 
 def write_result(list_dicts):
@@ -194,23 +116,14 @@ if __name__ == '__main__':
         series_params = list(series_params)
         print(f"nr of params {len(series_params)}")
 
+    num_workers = os.sched_getaffinity(0)
+    print(f"Num of workers = {len(num_workers)}")
+    print(f"Num of jobs = {len(series_params) * len(seeds)}")
+    
     start = time.time()
-    tasks = multiprocessing.JoinableQueue()
-    results = multiprocessing.JoinableQueue()
-
-    num_consumers = multiprocessing.cpu_count() * 2
-    print(f"Creating {num_consumers} consumers")
-    consumers = [Consumer(tasks, results) for _ in range(num_consumers)]
-    for w in consumers:
-        w.start()
-
-    experiment_results = []
-
-    for r, d, k, deg, a, e, m, n in series_params:   
-        m = "well" if m is True else "miss"
-
-        tasks.put(Task(
-            n_total=n, 
+    all_results = Parallel(n_jobs=len(num_workers), verbose=5)(
+        delayed(do_spline_experiment)(
+            n_total=n,
             test_frac=0.2,
             d_variables=d,
             n_knots=k,
@@ -218,30 +131,15 @@ if __name__ == '__main__':
             alpha=a,
             regularizer=r,
             entanglement=e,
-            spec=m, 
-            seeds=seeds
-        ))
-
-    # Add a poison pill for each consumer
-    for i in range(num_consumers):
-        tasks.put(None)
-
-    all_jobs = len(series_params)
-    num_jobs = len(series_params) 
-    print(f"Nr of experiments {num_jobs * len(seeds)}")
-    while num_jobs > 0:
-        experiment_results.extend(results.get())
-        num_jobs -= 1
-        print(f" Nr of jobs left is {num_jobs} of {all_jobs}")
-
-        if len(experiment_results) >= 1000:
-            write_results_to_db(experiment_results=experiment_results)
-            experiment_results = []
-            
-    tasks.join()
-
+            spec="well" if m else "miss",
+            seed=seed
+        ) 
+        for r, d, k, deg, a, e, m, n in series_params
+        for seed in seeds
+    )
+    write_results_to_db(experiment_results=all_results)
     stop = time.time()
-    elapsed_str = time.strftime("%H:%M:%S", time.gmtime(stop - start))
 
+    elapsed_str = time.strftime("%H:%M:%S", time.gmtime(stop - start))
     print(f"--- Elapsed time running in parallel {elapsed_str} ---")
-    write_results_to_db(experiment_results=experiment_results)
+    

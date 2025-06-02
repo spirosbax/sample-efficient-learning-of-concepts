@@ -1,0 +1,25 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=192
+#SBATCH --partition=genoa
+#SBATCH --time=02:00:00
+#SBATCH --job-name=ivae
+#SBATCH --output=ivae_exp.out
+
+conda deactivate 
+
+module purge
+module load 2024 SciPy-bundle/2024.05-gfbf-2024a
+
+source venv/bin/activate
+
+cd $HOME/crl-for-concept-explanations/code/DL_experiments/DMS_VAE_bin
+cp -r checkpoints /dev/shm
+
+# srun python -u test.py --cluster --baseline --estimator
+srun python ivae_test_binarized.py --cluster 
+rm -r /dev/shm/checkpoints
+
+

@@ -1,0 +1,23 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=18
+#SBATCH --gpus=1
+#SBATCH --partition=gpu_a100
+#SBATCH --time=12:00:00
+#SBATCH --job-name=cbm_ar
+#SBATCH --output=cbm_ar_exp.out
+
+module purge
+# module load 2023
+# module load Anaconda3/2023.07-2
+
+source activate permutation-dl
+
+cd $HOME/crl-for-concept-explanations/code/DL_experiments/DMS_VAE_bin
+
+# srun python -u test.py --cluster --baseline --estimator
+srun python -u cbm_ar_test_binarized.py --cluster 
+
+
