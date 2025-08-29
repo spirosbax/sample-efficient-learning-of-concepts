@@ -34,14 +34,30 @@ class permutationMixin:
                 [n_features * [g] for g in groups] 
             )
 
-        if optim_kwargs['alpha'] == 0:
-            optim = Ridge()
+        if regularizer == "logistic":
+            # needed by two_stage path
+            self.pred_groups = (np.concatenate([n_features*[idx] for idx in range(dim)])
+                                if groups is None else
+                                np.concatenate([n_features*[g] for g in groups]))
+            # sklearn LogisticRegression does NOT take 'alpha' – drop it
+            lr_kwargs = {k: v for k, v in optim_kwargs.items() if k != "alpha"}
+            # sensible defaults; override in optim_kwargs
+            lr_kwargs.setdefault("max_iter", 20000)
+            lr_kwargs.setdefault("penalty", "l1")
+            # NOTE: for L1 use solver="liblinear" (or "saga")
+            return LogisticRegression(**lr_kwargs)
+
+        alpha = optim_kwargs.get("alpha", None)
+        if alpha is None:
+            raise ValueError(f"'alpha' must be provided in optim_kwargs for regularizer='{regularizer}'.")
+        if alpha == 0:
+            return Ridge()
         else:
             if regularizer == "group":
-                optim_kwargs["group_reg"] = optim_kwargs["alpha"]
+                optim_kwargs["group_reg"] = alpha
                 optim_kwargs.pop("alpha", None)
 
-                optim = GroupLasso(
+                return GroupLasso(
                     groups=self.lasso_groups,
                     supress_warning=True,
                     n_iter=20000,
@@ -49,10 +65,10 @@ class permutationMixin:
                     **optim_kwargs
                 )
             elif regularizer == "logistic_group":
-                optim_kwargs["group_reg"] = optim_kwargs["alpha"]
+                optim_kwargs["group_reg"] = alpha
                 optim_kwargs.pop("alpha", None)
 
-                optim = LogisticGroupLasso(
+                return LogisticGroupLasso(
                     groups=self.lasso_groups,
                     supress_warning=True,
                     n_iter=20000,
@@ -60,45 +76,25 @@ class permutationMixin:
                     **optim_kwargs
                 )
             elif regularizer == "lasso":
-                optim = Lasso(
+                return Lasso(
                     max_iter=20000,
                     tol=1e-4, 
                     selection='cyclic',
                     **optim_kwargs
                 )
             elif regularizer == "elastic":
-                optim = ElasticNet(
+                return ElasticNet(
                     max_iter=20000,
                     tol=1e-4, 
                     selection='cyclic',
                     **optim_kwargs
                 )
             elif regularizer == "ridge":
-                optim = Ridge(
+                return Ridge(
                     max_iter=20000, 
                     tol=1e-4,
                     **optim_kwargs
                 )
-                if groups is None:
-                    self.pred_groups = np.concatenate(
-                        [n_features * [idx] for idx in range(dim)]
-                    )
-                else:
-                    self.pred_groups = np.concatenate(
-                        [n_features * [g] for g in groups]
-                    )
-            elif regularizer == "logistic":
-                if groups is None:
-                    self.pred_groups = np.concatenate(
-                        [n_features * [idx] for idx in range(dim)]
-                    )
-                else:
-                    self.pred_groups = np.concatenate(
-                        [n_features * [g] for g in groups]
-                    )
-                optim = LogisticRegression(max_iter=20000)
-
-        return optim
 
     def _invert_permutation(self, permutation):
         return np.argsort(permutation)
@@ -128,6 +124,7 @@ class permutationMixin:
         if groups is None:
             dim = x.shape[0]
             cor_abs = np.abs(np.corrcoef(x, y))[dim:, :dim]
+            cor_abs = np.nan_to_num(cor_abs, nan=0.0, posinf=0.0, neginf=0.0)
             perm_corr = sp.optimize.linear_sum_assignment(-1 * cor_abs)[1]
         else:
             unique_groups = np.unique(groups, return_index=True)[0]
@@ -307,13 +304,22 @@ class permutationMixin:
             for i in range(dim):
                 optim.fit(phi_x.T, y[i, :].T)
                 beta_hat_all[i, :] = optim.coef_[:, 0].T
-
-                self.intercept_[i] = self._optim.intercept_[0]
-            # phi_x_kron = sp.sparse.kron(np.eye(dim), phi_x)
-            # y_kron = y.reshape(-1, 1)
-            # optim.fit(phi_x_kron.T, y_kron)
-            # beta_hat_all = optim.coef_[:,0].reshape((dim, phi_x.shape[0]))
-            # self.lasso_groups = self.lasso_groups[:phi_x.shape[0]]
+                self.intercept_[i] = optim.intercept_[0]
+        elif isinstance(optim, LogisticRegression):
+            beta_hat_all = np.zeros((dim, phi_x.shape[0]))
+            self.intercept_ = np.zeros(dim)
+            for i in range(dim):
+                y_i = y[i, :].ravel()
+                if np.unique(y_i).size < 2:
+                    p = np.clip(y_i.mean(), 1e-6, 1-1e-6)
+                    self.intercept_[i] = np.log(p/(1-p))
+                    beta_hat_all[i, :] = 0.0
+                    continue
+                # fresh copy avoids accidental warm starts across tasks
+                opt_i = copy(optim)
+                opt_i.fit(phi_x.T, y_i)
+                beta_hat_all[i, :] = opt_i.coef_.ravel()
+                self.intercept_[i] = opt_i.intercept_[0]
         elif optim.__class__.__name__ == "GroupLasso":
             optim.fit(phi_x.T, y.T)
             beta_hat_all = optim.coef_.T
@@ -469,7 +475,13 @@ class FeaturePermutationEstimator(permutationMixin, BaseEstimator):
             two_stage: Union[str, None]=None
     ) -> None:
         self.regularizer = regularizer
-        assert 'alpha' in optim_kwargs, "No regularization parameter found, this option must be supplied."
+        # Alpha is only required for these regularizers
+        needs_alpha = regularizer in {"lasso", "elastic", "group", "logistic_group", "ridge"}
+        if needs_alpha and "alpha" not in self.optim_kwargs:
+            raise ValueError(
+                f"'alpha' must be provided in optim_kwargs for regularizer='{regularizer}'. "
+                f"For 'logistic' (sklearn), use 'C'/'penalty'/'solver' instead."
+            )
         self.optim_kwargs = copy(optim_kwargs)
         self.feature_transform = feature_transform
         self.d_variables = d_variables
@@ -497,17 +509,23 @@ class FeaturePermutationEstimator(permutationMixin, BaseEstimator):
                 phi_x_perm = X_perm
                 phi_x_predict = self.transform(X_predict)
 
+            pred_kwargs = {}
+            if self.two_stage in {"lasso","elastic","group","ridge","logistic_group"}:
+                pred_kwargs["alpha"] = self.optim_kwargs["alpha"]
+            else:
+                # e.g. sklearn logistic: forward your logistic kwargs (C, penalty, solver)
+                pred_kwargs.update({k:v for k,v in self.optim_kwargs.items() if k != "alpha"})
+
             self._predict_optims = [
                 self._setup_optim(
-                    regularizer=self.two_stage, 
-                    optim_kwargs={"alpha": self.optim_kwargs["alpha"]}, 
+                    regularizer=self.two_stage,
+                    optim_kwargs=pred_kwargs,
                     dim=self.d_variables,
-                    n_features=self.n_features, 
+                    n_features=self.n_features,
                     groups=self.groups
-                    ) 
+                )
                 for _ in range(self.d_variables)
-                ]
-
+            ]
             _perm_features = 1
         else:
             if not is_fit_transformed:
@@ -540,7 +558,7 @@ class FeaturePermutationEstimator(permutationMixin, BaseEstimator):
         stop = time()
         res["time_match"] = stop - start
         
-        if self.regularizer != "logistic_group":
+        if self.regularizer not in ("logistic", "logistic_group"):
             start = time()
             self.perm_hat_corr_ = self._get_corr_perm(X_perm, y_perm, groups=self.groups)
             stop = time()
